@@ -438,7 +438,7 @@ mtcp_write_anonymous_pages(int fd, Area area)
   area.properties |= DMTCP_ZERO_PAGE_PARENT_HEADER;
   writeAreaHeader(fd, &area);
   area.properties ^= DMTCP_ZERO_PAGE_PARENT_HEADER;
-
+  const uintptr_t end = (uintptr_t)area.addr + area.size;
   while (area.size > 0) {
     size_t size;
     int is_zero;
@@ -447,7 +447,8 @@ mtcp_write_anonymous_pages(int fd, Area area)
       size = area.size;
       is_zero = 0;
     } else {
-      mtcp_get_next_page_range(&a, &size, &is_zero);
+      // FIXME: Use ioctl(MAP_SCAN) if Linux version is 6.7+
+      is_zero = Util::scanOccupiedRangeBatch((uintptr_t)a.addr, end, &size);
     }
 
     a.properties = is_zero ? DMTCP_ZERO_PAGE : 0;

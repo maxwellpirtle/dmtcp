@@ -1,0 +1,14 @@
+set pagination off
+set breakpoint pending on
+source watch-mmap.py
+b _start
+b fork
+b dmtcp_get_current_thread
+r
+c
+c
+c
+b mmap_fixed_noreplace
+c
+disable 3
+

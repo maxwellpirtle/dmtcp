@@ -27,7 +27,7 @@
 #include "jassert.h"
 #include "dmtcp.h"
 
-#define ENABLE_DLSYM_WRAPPER
+// #define ENABLE_DLSYM_WRAPPER
 #ifdef ENABLE_DLSYM_WRAPPER
 
 /* NOTE:  'dlsym' is used in DMTCP in two different ways.

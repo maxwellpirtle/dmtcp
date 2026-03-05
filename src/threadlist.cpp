@@ -212,8 +212,8 @@ ThreadList::init()
 /*****************************************************************************
  *
  *****************************************************************************/
-void
-ThreadList::createCkptThread()
+// __attribute__((no_sanitize("thread")))
+void ThreadList::createCkptThread()
 {
   sem_init(&sem_launch, 0, 0);
   sem_init(&semNotifyCkptThread, 0, 0);

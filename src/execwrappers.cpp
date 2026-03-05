@@ -153,17 +153,17 @@ dmtcp_prepare_atfork(void)
   }
 }
 
-extern "C" int
-__register_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(
-                    void), void *dso_handle)
-{
-  dmtcp_prepare_atfork();
-
-  /* dmtcp_initialize() must be called before __register_atfork().
-   * NEXT_FNC() guarantees that dmtcp_initialize() is called if
-   * it was not called earlier. */
-  return NEXT_FNC(__register_atfork)(prepare, parent, child, dso_handle);
-}
+// extern "C" int
+// __register_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(
+//                     void), void *dso_handle)
+// {
+//   // dmtcp_prepare_atfork();
+//
+//   /* dmtcp_initialize() must be called before __register_atfork().
+//    * NEXT_FNC() guarantees that dmtcp_initialize() is called if
+//    * it was not called earlier. */
+//   return NEXT_FNC(__register_atfork)(prepare, parent, child, dso_handle);
+// }
 
 extern "C" pid_t
 fork()

@@ -89,7 +89,7 @@ thread_start(void *arg)
   PluginManager::eventHook(DMTCP_EVENT_PTHREAD_RETURN, NULL);
   return result;
 }
-
+// __attribute__((no_sanitize("thread")))
 extern "C" int
 pthread_create(pthread_t *pth,
                const pthread_attr_t *attr,

@@ -45,7 +45,7 @@ static int
 bannedSignalNumber()
 {
   if (stopSignal == -1) {
-    stopSignal = DmtcpWorker::determineCkptSignal();
+    stopSignal = SIGUSR2;//DmtcpWorker::determineCkptSignal();
 
     // On some systems, the ckpt-signal may be blocked by default. Unblock it
     // now.

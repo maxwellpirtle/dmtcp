@@ -24,6 +24,7 @@
 #include <limits.h>  // for PATH_MAX
 #include <stdlib.h>
 #include <string.h>
+#include <sys/syscall.h>
 #include <sys/time.h>
 #include "../jalib/jassert.h"
 #include "../jalib/jfilesystem.h"
@@ -159,7 +160,8 @@ Util::writeAll(int fd, const void *buf, size_t count)
   size_t num_written = 0;
 
   do {
-    ssize_t rc = write(fd, ptr + num_written, count - num_written);
+    ssize_t rc = syscall(SYS_write, fd, ptr + num_written, count - num_written);
+    // ssize_t rc = write(fd, ptr + num_written, count - num_written);
     if (rc == -1) {
       if (errno == EINTR || errno == EAGAIN) {
         continue;
@@ -565,10 +567,104 @@ Util::pageMask()
  * TODO: One can use /proc/self/pagemap to detect if the page is backed by a
  * shared zero page.
  */
+#define BATCH_SIZE 1024 
+bool 
+__attribute__((disable_sanitizer_instrumentation))
+Util::scanOccupiedRangeBatch(uintptr_t start, uintptr_t end, uintptr_t *size_scanned) {
+  int fd = open("/proc/self/pagemap", O_RDONLY);
+  JASSERT(fd >= 0)(JASSERT_ERRNO);
+  const size_t page_size = sysconf(_SC_PAGESIZE);
+  uint64_t entries[BATCH_SIZE];
+  // Ensure we start and end on page boundaries
+  // DMTCP should already be doing this.  Maybe, just an assert here.
+  uintptr_t current_addr = start & ~(page_size - 1);
+  uintptr_t end_addr = (end + page_size - 1) & ~(page_size - 1);
+  uintptr_t range_start = 0;
+  int is_scanning_occupied_range = -1; // Set to 0 or 1 later
+  printf("Scanning Batch: %p to %p\n", (void*)current_addr, (void*)end_addr);
+  printf("----------------------------------------------------------\n");
+  while (current_addr < end_addr) {
+    size_t pages_remaining = (end_addr - current_addr) / page_size;
+    size_t pages_to_read =
+         (pages_remaining < BATCH_SIZE) ? pages_remaining : BATCH_SIZE;
+    // The index into /proc/self/pagemap is (virtual_page_number * 8 bytes)
+    off_t offset = (off_t)(current_addr / page_size) * sizeof(uint64_t);
+    ssize_t bytes_read = pread(fd, entries,
+                   pages_to_read * sizeof(uint64_t), offset);
+    if (bytes_read <= 0) break;
+    size_t actual_pages = bytes_read / sizeof(uint64_t);
+    for (size_t i = 0; i < actual_pages; i++) {
+      uintptr_t page_ptr = current_addr + (i * page_size);
+      /* Bit 63: Page is Present (in RAM)
+       * Bit 62: Page is Swapped (on Disk)
+       */
+      int is_occupied_page = (entries[i] >> 62) & 0x3;
+      if (is_scanning_occupied_range == -1) {
+        is_scanning_occupied_range = is_occupied_page;
+      }
+      // FIXME:  The 'if' and 'else' should be combined into one.
+      if (is_occupied_page && !is_scanning_occupied_range) {
+        // We're done scanning.  Return result.
+        printf("%s: %p - %p [%8zu KB]\n", 
+               (is_scanning_occupied_range ? "Occupied" : "Unoccupied (zero)"),
+               (void*)start, (void*)page_ptr, 
+               (page_ptr - start) / 1024);
+        *size_scanned = page_ptr - start;
+        close(fd);
+        return !is_scanning_occupied_range; // Negate: return zero pages
+      } 
+      else if (!is_occupied_page && is_scanning_occupied_range) {
+        // We're done scanning.  Return result.
+        printf("%s: %p - %p [%8zu KB]\n", 
+               (is_scanning_occupied_range ? "Occupied" : "Unoccupied (zero)"),
+               (void*)start, (void*)page_ptr, 
+               (page_ptr - start) / 1024);
+        *size_scanned = page_ptr - start;
+        close(fd);
+        return !is_scanning_occupied_range; // Negate: return zero pages
+      }
+    }
+    current_addr += actual_pages * page_size;
+  }
+      printf("%s: %p - %p [%8zu KB]\n", 
+            (is_scanning_occupied_range ? "Occupied" : "Unoccupied (zero)"),
+            (void*)start, (void*)end, 
+            (end - start) / 1024);
+      *size_scanned = end - start;
+      close(fd);
+      return !is_scanning_occupied_range; // Negate: return zero pages
+}
+
 bool
 Util::areZeroPages(void *addr, size_t numPages)
 {
   static size_t page_size = pageSize();
+  //   int fd = _real_open("/proc/self/pagemap", O_RDONLY);
+  //   // if (fd < 0) return false;
+  //
+  //   uint64_t entry;
+  //   // size_t page_size = sysconf(_SC_PAGESIZE);
+  //   uint64_t offset = (uint64_t)addr / page_size * sizeof(uint64_t);
+  //
+  //   if (lseek(fd, offset, SEEK_SET) == (off_t)-1) {
+  //       _real_close(fd);
+  //       return false;
+  //   }
+  //
+  //   if (read(fd, &entry, sizeof(uint64_t)) != sizeof(uint64_t)) {
+  //       _real_close(fd);
+  //       return false;
+  //   }
+  //
+  //   _real_close(fd);
+  //
+  //   // Bit 63 is "Present", Bit 62 is "Swapped"
+  //   // Neither present nor swapped means the kernel hasn't 
+  //   // allocated a physical frame for this virtual address yet.
+  //   int present = (entry >> 63) & 1;
+  //   int swapped = (entry >> 62) & 1;
+  //   return !present && !swapped;
+  //
   long long *buf = (long long *)addr;
   size_t i;
   size_t end = numPages * page_size / sizeof(*buf);
@@ -584,6 +680,7 @@ Util::areZeroPages(void *addr, size_t numPages)
   }
   return res == 0;
 }
+
 
 /* Caller must allocate exec_path of size at least MTCP_MAX_PATH */
 char *

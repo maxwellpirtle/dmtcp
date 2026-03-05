@@ -152,7 +152,7 @@ bool_atomic_dwcas(void volatile *dst, void *oldValue, void *newValue)
                                      (uint128_t*)oldValue,
                                      (uint128_t*)newValue, 0,
                                       __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
-# elif defined (HAS_128_SYNC_BOOL)
+# elif 0
   typedef unsigned __int128 uint128_t;
   // FIXME:  WE should modify dmtcp_command.cpp and coorindatorapi.cpp
   //   to replace JALLOC_HELPER_MALLOC/FREE by malloc/free at runtime for
