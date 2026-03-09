@@ -84,7 +84,9 @@
    */                                                                         \
   rinfoPtr->restorememoryareas_fptr(rinfoPtr)
 
-typedef void (*fnptr_t)();
+struct RestoreInfo;
+typedef void (*fnptr_t)(struct RestoreInfo *);
+typedef void (*fnptr_post_restart_t)(double, int);
 
 #define MAX_REGIONS_TO_MUNMAP 16
 
@@ -108,7 +110,7 @@ typedef struct RestoreInfo {
   VA vvarStart;
   VA vvarEnd;
   VA endOfStack;
-  fnptr_t post_restart;
+  fnptr_post_restart_t post_restart;
   // NOTE: Update the offset when adding fields to the RestoreInfo struct
   // See note below in the restart_fast_path() function.
   fnptr_t restore_func;
