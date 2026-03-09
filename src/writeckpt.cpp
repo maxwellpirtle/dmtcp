@@ -97,6 +97,11 @@ void
 mtcp_writememoryareas(int fd)
 {
   Area area;
+  // if (strncmp(area.name, "/usr/lib/aarch64-linux-gnu/libstdc++",
+  // strlen("/usr/lib/aarch64-linux-gnu/libstdc++")) == 0) {
+  //   int dummy = 1;
+  //   while (dummy);
+  // }
 
   JTRACE("Performing checkpoint.");
 
@@ -359,21 +364,46 @@ mtcp_writememoryareas(int fd)
      * condition.
      */
 
-    if ((area.prot & PROT_READ) == 0) {
-      JASSERT(mprotect(area.addr, area.size, area.prot | PROT_READ) == 0)
-        (JASSERT_ERRNO) (area.size) ((void*)area.addr)
-      .Text("error adding PROT_READ to mem region");
-    }
+    /*  -----
+     * TSAN Page BEFORE checkpoint: perms ---- <--- a.prot
+     * -------
+     *
+     * mprotect(... | PROT_READ)
+     *
+     * ----
+     *  TSAN PAGE : perms: r----
+     *---
+     *
+     * a.prot --> == ---
+     * Util:writeAll(...)
+     *
+     *
+     *
+     * RESTART
+     *
+     * -----
+     *  TSAN PAGE:
+     *  ----
+     *
+     *  a.prot = 0 ---> Nothing --> ---w :?
+     *
+     */
+
+    // if ((area.prot & PROT_READ) == 0) {
+    //   JASSERT(mprotect(area.addr, area.size, area.prot | PROT_READ) == 0)
+    //     (JASSERT_ERRNO) (area.size) ((void*)area.addr)
+    //   .Text("error adding PROT_READ to mem region");
+    // }
 
     // the whole thing comes after the restore image
     writememoryarea(fd, area);
 
     // Now remove PROT_READ from the area if it didn't have it originally
-    if ((area.prot & PROT_READ) == 0) {
-      JASSERT(mprotect(area.addr, area.size, area.prot) == 0)
-        (JASSERT_ERRNO) ((void*)area.addr) (area.size)
-      .Text("error removing PROT_READ from mem region.");
-    }
+    // if ((area.prot & PROT_READ) == 0) {
+    //   JASSERT(mprotect(area.addr, area.size, area.prot) == 0)
+    //     (JASSERT_ERRNO) ((void*)area.addr) (area.size)
+    //   .Text("error removing PROT_READ from mem region.");
+    // }
   }
 
   /* It's now safe to do this, since we're done using writememoryarea() */
@@ -404,29 +434,29 @@ remap_nscd_areas(const vector<ProcMapsArea> &areas)
  * If the first page is all-zero, it searches for contiguous zero pages and
  * returns them.
  */
-static void
-mtcp_get_next_page_range(Area *area, size_t *size, int *is_zero)
-{
-  char *pg;
-  const size_t one_MB = (1024 * 1024);
-
-  if (area->size < one_MB) {
-    *size = area->size;
-    *is_zero = 0;
-    return;
-  }
-  *size = one_MB;
-  *is_zero = Util::areZeroPages(area->addr, one_MB / MTCP_PAGE_SIZE);
-  for (pg = area->addr + one_MB;
-       pg < area->addr + area->size;
-       pg += one_MB) {
-    size_t minsize = MIN(one_MB, (size_t)(area->addr + area->size - pg));
-    if (*is_zero != Util::areZeroPages(pg, minsize / MTCP_PAGE_SIZE)) {
-      break;
-    }
-    *size += minsize;
-  }
-}
+// static void
+// mtcp_get_next_page_range(Area *area, size_t *size, int *is_zero)
+// {
+//   char *pg;
+//   const size_t one_MB = (1024 * 1024);
+//
+//   if (area->size < one_MB) {
+//     *size = area->size;
+//     *is_zero = 0;
+//     return;
+//   }
+//   *size = one_MB;
+//   *is_zero = Util::areZeroPages(area->addr, one_MB / MTCP_PAGE_SIZE);
+//   for (pg = area->addr + one_MB;
+//        pg < area->addr + area->size;
+//        pg += one_MB) {
+//     size_t minsize = MIN(one_MB, (size_t)(area->addr + area->size - pg));
+//     if (*is_zero != Util::areZeroPages(pg, minsize / MTCP_PAGE_SIZE)) {
+//       break;
+//     }
+//     *size += minsize;
+//   }
+// }
 
 static void
 mtcp_write_anonymous_pages(int fd, Area area)
@@ -450,22 +480,22 @@ mtcp_write_anonymous_pages(int fd, Area area)
       // FIXME: Use ioctl(MAP_SCAN) if Linux version is 6.7+
       is_zero = Util::scanOccupiedRangeBatch((uintptr_t)a.addr, end, &size);
     }
+    printf("is_zero: %d\n", is_zero);
 
+    printf("before %lu\n", a.properties);
     a.properties = is_zero ? DMTCP_ZERO_PAGE : 0;
+    printf("after %lu\n", a.properties);
     a.properties |= DMTCP_ZERO_PAGE_CHILD_HEADER;
+    printf("after 2 %lu\n", a.properties);
     a.size = size;
     a.endAddr = a.addr + a.size;
 
-    writeAreaHeader(fd, &a);
+    writeAreaHeader(fd, &a); // a.prot NOT a.prot | PROT_READ -->
 
     if (!is_zero) {
-      JASSERT(Util::writeAll(fd, a.addr, a.size) == (ssize_t) a.size)
+      JASSERT(mprotect(a.addr, a.size, a.prot | PROT_READ) == 0);
+      JASSERT(Util::writeAll(fd, a.addr, a.size) == (ssize_t)a.size)
         .Text("writeAll failed during ckpt");
-    } else {
-      if (madvise(a.addr, a.size, MADV_DONTNEED) == -1) {
-        JTRACE("error doing madvise(..., MADV_DONTNEED)")
-          (JASSERT_ERRNO) ((void *)a.addr) ((int)a.size);
-      }
     }
     area.addr += size;
     area.size -= size;
@@ -517,9 +547,12 @@ writememoryarea(int fd, Area area)
     // NOTE: We cannot use lseek(SEEK_CUR) to detect how much data was
     // actually written here. This is because fd might be a pipe to gzip.
     if (area.mmapFileSize > 0) {
+      JASSERT(mprotect(area.addr, area.mmapFileSize, area.prot | PROT_READ) ==
+              0);
       JASSERT(Util::writeAll(fd, area.addr, area.mmapFileSize) ==
               (ssize_t)area.mmapFileSize);
     } else {
+      JASSERT(mprotect(area.addr, area.size, area.prot | PROT_READ) == 0);
       JASSERT(Util::writeAll(fd, area.addr, area.size) == (ssize_t)area.size);
     }
   }

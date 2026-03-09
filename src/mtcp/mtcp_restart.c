@@ -537,31 +537,30 @@ mtcp_simulateread(RestoreInfo *rinfo)
 
     if ((area.properties & DMTCP_ZERO_PAGE) == 0 &&
         (area.properties & DMTCP_ZERO_PAGE_PARENT_HEADER) == 0) {
-
       off_t seekLen = area.size;
       if (!(area.flags & MAP_ANONYMOUS) && area.mmapFileSize > 0) {
-        seekLen =  area.mmapFileSize;
+        seekLen = area.mmapFileSize;
       }
       if (mtcp_sys_lseek(rinfo->fd, seekLen, SEEK_CUR) < 0) {
-         mtcp_printf("Could not seek!\n");
-         break;
+        mtcp_printf("Could not seek!\n");
+        break;
       }
     }
 
     if ((area.properties & DMTCP_ZERO_PAGE_CHILD_HEADER) == 0) {
-      mtcp_printf("%p-%p %c%c%c%c %s          %s\n",
-                  area.addr, area.endAddr,
-                  ((area.prot & PROT_READ)  ? 'r' : '-'),
-                  ((area.prot & PROT_WRITE) ? 'w' : '-'),
-                  ((area.prot & PROT_EXEC)  ? 'x' : '-'),
-                  ((area.flags & MAP_SHARED)
-                    ? 's'
-                    : ((area.flags & MAP_PRIVATE) ? 'p' : '-')),
-                  ((area.flags & MAP_ANONYMOUS) ? "Anon" : "    "),
+      mtcp_printf(
+        "%p-%p %c%c%c%c %s          %s\n", area.addr, area.endAddr,
+        ((area.prot & PROT_READ) ? 'r' : '-'),
+        ((area.prot & PROT_WRITE) ? 'w' : '-'),
+        ((area.prot & PROT_EXEC) ? 'x' : '-'),
+        ((area.flags & MAP_SHARED) ? 's'
+                                   : ((area.flags & MAP_PRIVATE) ? 'p' : '-')),
+        ((area.flags & MAP_ANONYMOUS) ? "Anon" : "    "),
 
-                  // area.offset, area.devmajor, area.devminor, area.inodenum,
-                  area.name);
+        // area.offset, area.devmajor, area.devminor, area.inodenum,
+        area.name);
     }
+    mtcp_printf("area properties %d\n", area.properties);
   }
 }
 
@@ -854,9 +853,10 @@ read_one_memory_area(int fd, VA endOfStack)
   /* Now mmap the data of the area into memory. */
 
   /* CASE MAPPED AS ZERO PAGE: */
-  if ((area.properties & DMTCP_ZERO_PAGE) != 0) {
-    DPRINTF("restoring zero-paged anonymous area, %p bytes at %p\n",
-            area.size, area.addr);
+  if ((area.properties & DMTCP_ZERO_PAGE) == DMTCP_ZERO_PAGE) {
+    MTCP_ASSERT((area.properties & DMTCP_ZERO_PAGE_PARENT_HEADER) == 0);
+    DPRINTF("restoring zero-paged anonymous area, %p bytes at %p\n", area.size,
+            area.addr);
     // No need to mmap since the region has already been mmapped by the parent
     // header.
     // Just restore write-protection if needed.
@@ -937,16 +937,20 @@ read_one_memory_area(int fd, VA endOfStack)
       }
 
       /* POSIX says mmap would unmap old memory.  Munmap never fails if args
-      * are valid.  Can we unmap vdso and vsyscall in Linux?  Used to use
-      * mtcp_safemmap here to check for address conflicts.
-      */
-      mmappedat =
-        mmap_fixed_noreplace(area.addr, area.size, area.prot | PROT_WRITE,
-                            area.flags, imagefd, area.offset);
+       * are valid.  Can we unmap vdso and vsyscall in Linux?  Used to use
+       * mtcp_safemmap here to check for address conflicts.
+       */
+      // Non-zero pages need write access to write in their contents
+      // int prot = area.prot;
+      // if (!is_zero) {
+      //   prot |= PROT_WRITE;
+      // }
+      mmappedat = mmap_fixed_noreplace(area.addr, area.size, area.prot,
+                                       area.flags, imagefd, area.offset);
 
       MTCP_ASSERT(mmappedat == area.addr);
 
-  #if 0
+#if 0
       /*
       * The function is not used but is truer to maintaining the user's
       * view of /proc/ * /maps. It can be enabled again in the future after
@@ -963,19 +967,31 @@ read_one_memory_area(int fd, VA endOfStack)
       }
     }
 
+    // If `is_zero`, we already mapped in the anonymous
+    // if (is_zero) {
+    //   MTCP_ASSERT((area.flags & MAP_ANONYMOUS) == MAP_ANONYMOUS);
+    //   return 0;
+    // }
+
     if ((area.properties & DMTCP_ZERO_PAGE_PARENT_HEADER) == 0) {
       // Parent header doesn't have any follow on data.
-
       /* This mmapfile after prev. mmap is okay; use same args again.
        *  Posix says prev. map will be munmapped.
        */
+      MTCP_ASSERT((area.properties & DMTCP_ZERO_PAGE) == 0);
+      MTCP_ASSERT((area.properties & DMTCP_ZERO_PAGE_CHILD_HEADER) ==
+                  DMTCP_ZERO_PAGE_CHILD_HEADER);
 
       /* ANALYZE THE CONDITION FOR DOING mmapfile MORE CAREFULLY. */
       if (area.mmapFileSize > 0 && area.name[0] == '/') {
         DPRINTF("restoring memory region %p of %p bytes at %p\n",
-                    area.mmapFileSize, area.size, area.addr);
+                area.mmapFileSize, area.size, area.addr);
+        MTCP_ASSERT(mtcp_sys_mprotect(area.addr, area.mmapFileSize,
+                                      area.prot | PROT_WRITE) == 0);
         mtcp_readfile(fd, area.addr, area.mmapFileSize);
       } else {
+        MTCP_ASSERT(
+          mtcp_sys_mprotect(area.addr, area.size, area.prot | PROT_WRITE) == 0);
         mtcp_readfile(fd, area.addr, area.size);
       }
 
