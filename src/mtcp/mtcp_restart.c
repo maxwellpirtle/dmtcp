@@ -562,6 +562,27 @@ mtcp_simulateread(RestoreInfo *rinfo)
                   // area.offset, area.devmajor, area.devminor, area.inodenum,
                   area.name);
     }
+<<<<<<< HEAD
+=======
+    if ((area.properties & DMTCP_ZERO_PAGE_PARENT_HEADER) ==
+        DMTCP_ZERO_PAGE_PARENT_HEADER) {
+      mtcp_printf("  DMTCP_ZERO_PAGE_PARENT_HEADER\n");
+    }
+    if ((area.properties & DMTCP_ZERO_PAGE_CHILD_HEADER) == 0) {
+      int is_zero = (area.properties & DMTCP_ZERO_PAGE);
+      mtcp_printf(
+        "  > %s: %p-%p %c%c%c%c %s          %s\n",
+        (is_zero ? "DMTCP_ZERO_PAGE" : " OCCUPIED PAGES"),
+        area.addr, area.endAddr,
+        ((area.prot & PROT_READ) ? 'r' : '-'),
+        ((area.prot & PROT_WRITE) ? 'w' : '-'),
+        ((area.prot & PROT_EXEC) ? 'x' : '-'),
+        ((area.flags & MAP_SHARED) ? 's'
+                                   : ((area.flags & MAP_PRIVATE) ? 'p' : '-')),
+        ((area.flags & MAP_ANONYMOUS) ? "Anon" : "    "),
+        area.name);
+    }
+>>>>>>> a8616bdc07 (mtcp_restart.c: simulateread())
   }
 }
 
