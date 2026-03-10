@@ -568,7 +568,8 @@ mtcp_simulateread(RestoreInfo *rinfo)
         DMTCP_ZERO_PAGE_PARENT_HEADER) {
       mtcp_printf("  DMTCP_ZERO_PAGE_PARENT_HEADER\n");
     }
-    if ((area.properties & DMTCP_ZERO_PAGE_CHILD_HEADER) == 0) {
+    if ((area.properties & DMTCP_ZERO_PAGE_CHILD_HEADER) ==
+        DMTCP_ZERO_PAGE_CHILD_HEADER) {
       int is_zero = (area.properties & DMTCP_ZERO_PAGE);
       mtcp_printf(
         "  > %s: %p-%p %c%c%c%c %s          %s\n",
