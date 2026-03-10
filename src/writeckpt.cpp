@@ -83,6 +83,20 @@ writeAreaHeader(int fd, Area *area)
   JASSERT(Util::writeAll(fd, area, sizeof(*area)) == (ssize_t) sizeof(*area));
 }
 
+static void
+writeAreaData(int fd, Area *area)
+{
+  size_t size = (area->mmapFileSize > 0 ? area->mmapFileSize : area->size);
+  int needs_prot_read = (area->prot & PROT_READ) == 0;
+  if (needs_prot_read) { // temporarily give read protection
+    JASSERT(mprotect(area->addr, size, area->prot | PROT_READ) == 0);
+  }
+  JASSERT(Util::writeAll(fd, area->addr, size) == size);
+  if (needs_prot_read) { // restore orig. prot
+    JASSERT(mprotect(area->addr, size, area->prot) == 0);
+  }
+}
+
 /*****************************************************************************
  *
  *  This routine is called from time-to-time to write a new checkpoint file.
@@ -389,21 +403,8 @@ mtcp_writememoryareas(int fd)
      *
      */
 
-    // if ((area.prot & PROT_READ) == 0) {
-    //   JASSERT(mprotect(area.addr, area.size, area.prot | PROT_READ) == 0)
-    //     (JASSERT_ERRNO) (area.size) ((void*)area.addr)
-    //   .Text("error adding PROT_READ to mem region");
-    // }
-
     // the whole thing comes after the restore image
     writememoryarea(fd, area);
-
-    // Now remove PROT_READ from the area if it didn't have it originally
-    // if ((area.prot & PROT_READ) == 0) {
-    //   JASSERT(mprotect(area.addr, area.size, area.prot) == 0)
-    //     (JASSERT_ERRNO) ((void*)area.addr) (area.size)
-    //   .Text("error removing PROT_READ from mem region.");
-    // }
   }
 
   /* It's now safe to do this, since we're done using writememoryarea() */
@@ -493,9 +494,7 @@ mtcp_write_anonymous_pages(int fd, Area area)
     writeAreaHeader(fd, &a); // a.prot NOT a.prot | PROT_READ -->
 
     if (!is_zero) {
-      JASSERT(mprotect(a.addr, a.size, a.prot | PROT_READ) == 0);
-      JASSERT(Util::writeAll(fd, a.addr, a.size) == (ssize_t)a.size)
-        .Text("writeAll failed during ckpt");
+      writeAreaData(fd, &a);
     }
     area.addr += size;
     area.size -= size;
@@ -544,16 +543,6 @@ writememoryarea(int fd, Area area)
     }
 
     writeAreaHeader(fd, &area);
-    // NOTE: We cannot use lseek(SEEK_CUR) to detect how much data was
-    // actually written here. This is because fd might be a pipe to gzip.
-    if (area.mmapFileSize > 0) {
-      JASSERT(mprotect(area.addr, area.mmapFileSize, area.prot | PROT_READ) ==
-              0);
-      JASSERT(Util::writeAll(fd, area.addr, area.mmapFileSize) ==
-              (ssize_t)area.mmapFileSize);
-    } else {
-      JASSERT(mprotect(area.addr, area.size, area.prot | PROT_READ) == 0);
-      JASSERT(Util::writeAll(fd, area.addr, area.size) == (ssize_t)area.size);
-    }
+    writeAreaData(fd, &area);
   }
 }
