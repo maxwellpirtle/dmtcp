@@ -44,21 +44,22 @@
 #include <sched.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <sys/time.h>
+#include <sys/types.h>
 #include <unistd.h>
-#include <stddef.h>
 
 #include "../membarrier.h"
 #include "config.h"
 #include "mtcp_header.h"
-#include "mtcp_sys.h"
 #include "mtcp_restart.h"
+#include "mtcp_sys.h"
 #include "mtcp_util.h"
 #include "procmapsarea.h"
 
@@ -66,7 +67,7 @@
 static void mmapfile(int fd, void *buf, size_t size, int prot, int flags);
 #endif
 
-#define BINARY_NAME     "mtcp_restart"
+#define BINARY_NAME "mtcp_restart"
 
 /* struct RestoreInfo to pass all parameters from one function to next.
  * This must be global (not on stack) at the time that we jump from
@@ -540,30 +541,29 @@ mtcp_simulateread(RestoreInfo *rinfo)
 
       off_t seekLen = area.size;
       if (!(area.flags & MAP_ANONYMOUS) && area.mmapFileSize > 0) {
-        seekLen =  area.mmapFileSize;
+        seekLen = area.mmapFileSize;
       }
       if (mtcp_sys_lseek(rinfo->fd, seekLen, SEEK_CUR) < 0) {
-         mtcp_printf("Could not seek!\n");
-         break;
+        mtcp_printf("Could not seek!\n");
+        break;
       }
     }
 
     if ((area.properties & DMTCP_ZERO_PAGE_CHILD_HEADER) == 0) {
-      mtcp_printf("%p-%p %c%c%c%c %s          %s\n",
-                  area.addr, area.endAddr,
-                  ((area.prot & PROT_READ)  ? 'r' : '-'),
+      mtcp_printf("%p-%p (%d bytes) %c%c%c%c %s          %s\n", area.addr,
+                  area.endAddr,
+                  ((uintptr_t)(area.endAddr) - (uintptr_t)(area.addr)),
+                  ((area.prot & PROT_READ) ? 'r' : '-'),
                   ((area.prot & PROT_WRITE) ? 'w' : '-'),
-                  ((area.prot & PROT_EXEC)  ? 'x' : '-'),
+                  ((area.prot & PROT_EXEC) ? 'x' : '-'),
                   ((area.flags & MAP_SHARED)
-                    ? 's'
-                    : ((area.flags & MAP_PRIVATE) ? 'p' : '-')),
+                       ? 's'
+                       : ((area.flags & MAP_PRIVATE) ? 'p' : '-')),
                   ((area.flags & MAP_ANONYMOUS) ? "Anon" : "    "),
 
                   // area.offset, area.devmajor, area.devminor, area.inodenum,
                   area.name);
     }
-<<<<<<< HEAD
-=======
     if ((area.properties & DMTCP_ZERO_PAGE_PARENT_HEADER) ==
         DMTCP_ZERO_PAGE_PARENT_HEADER) {
       mtcp_printf("  DMTCP_ZERO_PAGE_PARENT_HEADER\n");
@@ -571,26 +571,21 @@ mtcp_simulateread(RestoreInfo *rinfo)
     if ((area.properties & DMTCP_ZERO_PAGE_CHILD_HEADER) ==
         DMTCP_ZERO_PAGE_CHILD_HEADER) {
       int is_zero = (area.properties & DMTCP_ZERO_PAGE);
-      mtcp_printf(
-        "  > %s: %p-%p %c%c%c%c %s          %s\n",
-        (is_zero ? "DMTCP_ZERO_PAGE" : " OCCUPIED PAGES"),
-        area.addr, area.endAddr,
-        ((area.prot & PROT_READ) ? 'r' : '-'),
-        ((area.prot & PROT_WRITE) ? 'w' : '-'),
-        ((area.prot & PROT_EXEC) ? 'x' : '-'),
-        ((area.flags & MAP_SHARED) ? 's'
-                                   : ((area.flags & MAP_PRIVATE) ? 'p' : '-')),
-        ((area.flags & MAP_ANONYMOUS) ? "Anon" : "    "),
-        area.name);
+      mtcp_printf("  > %s: %p-%p %c%c%c%c %s          %s\n",
+                  (is_zero ? "DMTCP_ZERO_PAGE" : " OCCUPIED PAGES"), area.addr,
+                  area.endAddr, ((area.prot & PROT_READ) ? 'r' : '-'),
+                  ((area.prot & PROT_WRITE) ? 'w' : '-'),
+                  ((area.prot & PROT_EXEC) ? 'x' : '-'),
+                  ((area.flags & MAP_SHARED)
+                       ? 's'
+                       : ((area.flags & MAP_PRIVATE) ? 'p' : '-')),
+                  ((area.flags & MAP_ANONYMOUS) ? "Anon" : "    "), area.name);
     }
->>>>>>> a8616bdc07 (mtcp_restart.c: simulateread())
   }
 }
 
 NO_OPTIMIZE
-static void
-restorememoryareas(RestoreInfo *rinfo)
-{
+static void restorememoryareas(RestoreInfo *rinfo) {
   int mtcp_sys_errno;
   /* Restore memory areas */
   DPRINTF("restoring memory areas\n");
@@ -829,10 +824,30 @@ readmemoryareas(int fd, VA endOfStack)
 #endif /* if defined(__arm__) || defined(__aarch64__) */
 }
 
+static void readAreaData(int fd, Area *area) {
+  int mtcp_sys_errno;
+  if (mtcp_sys_mprotect(area->addr, area->size, area->prot | PROT_WRITE) < 0) {
+    MTCP_PRINTF("error %d write-protecting %p bytes at %p\n", mtcp_sys_errno,
+                area->size, area->addr);
+    mtcp_abort();
+  }
+  if (area->mmapFileSize > 0 && area->name[0] == '/') {
+    DPRINTF("restoring memory region %p of %p bytes at %p\n",
+            area->mmapFileSize, area->size, area->addr);
+    mtcp_readfile(fd, area->addr, area->mmapFileSize);
+  } else {
+    DPRINTF("restoring memory region %p bytes at %p\n", area->size, area->addr);
+    mtcp_readfile(fd, area->addr, area->size);
+  }
+  if (mtcp_sys_mprotect(area->addr, area->size, area->prot) < 0) {
+    MTCP_PRINTF("error %d write-protecting %p bytes at %p\n", mtcp_sys_errno,
+                area->size, area->addr);
+    mtcp_abort();
+  }
+}
+
 NO_OPTIMIZE
-static int
-read_one_memory_area(int fd, VA endOfStack)
-{
+static int read_one_memory_area(int fd, VA endOfStack) {
   int mtcp_sys_errno;
   int imagefd;
   void *mmappedat;
@@ -875,12 +890,82 @@ read_one_memory_area(int fd, VA endOfStack)
 
   /* Now mmap the data of the area into memory. */
 
+  // Three cases:
+  //
+  // CASE 1: Zero page parent header: Populate with zero pages without
+  // protections
+  //
+  // CASE 2: Zero page child header + not zero page: Restore memory (adding any
+  // necessary protections)
+  //
+  // CASE 3: Zero page child header + zero page: Skip (already done in case 1)
+
+  // CASE 1
+  if ((area.properties & DMTCP_ZERO_PAGE_PARENT_HEADER) ==
+      DMTCP_ZERO_PAGE_PARENT_HEADER) {
+    // int dummy =
+    // while (dummy)
+    //   ;
+    int imagefd = -1;
+    if (area.name[0] == '/') { /* If not null string, not [stack] or [vdso] */
+      imagefd = mtcp_sys_open(area.name, O_RDONLY, 0);
+      if (imagefd >= 0) {
+        /* If the current file size is smaller than the original, we map the
+         * region as private anonymous. Note that with this we lose the name
+         * of the region but most applications may not care.
+         */
+        off_t curr_size = mtcp_sys_lseek(imagefd, 0, SEEK_END);
+        MTCP_ASSERT(curr_size != -1);
+        if ((curr_size < area.offset + area.size) && (area.prot & PROT_WRITE)) {
+          DPRINTF("restoring non-anonymous area %s as anonymous: %p  bytes "
+                  "at %p\n",
+                  area.name, area.size, area.addr);
+          mtcp_sys_close(imagefd);
+          imagefd = -1;
+          area.offset = 0;
+          area.flags |= MAP_ANONYMOUS;
+        }
+      }
+    }
+    if (imagefd == -1 && (area.flags & MAP_PRIVATE)) {
+      area.flags |= MAP_ANONYMOUS;
+    }
+    int mtcp_sys_errno;
+    mmappedat = mmap_fixed_noreplace(area.addr, area.size, 0, area.flags,
+                                     imagefd, area.offset);
+    MTCP_ASSERT(mmappedat == area.addr);
+    if (mtcp_sys_mprotect(area.addr, area.size, area.prot) < 0) {
+      MTCP_PRINTF("error %d mprotect %p bytes at %p\n", mtcp_sys_errno,
+                  area.size, area.addr);
+      mtcp_abort();
+      return 0;
+    }
+    return 0;
+  }
+
+  // CASE 2
+  if (((area.properties & DMTCP_ZERO_PAGE_CHILD_HEADER) ==
+       DMTCP_ZERO_PAGE_CHILD_HEADER) &&
+      ((area.properties & DMTCP_ZERO_PAGE) == 0)) {
+    readAreaData(fd, &area);
+    return 0;
+  }
+
+  // CASE 3
+  if ((area.properties & (DMTCP_ZERO_PAGE_CHILD_HEADER | DMTCP_ZERO_PAGE)) ==
+      (DMTCP_ZERO_PAGE_CHILD_HEADER | DMTCP_ZERO_PAGE)) {
+    return 0;
+  }
+  MTCP_ASSERT((area.properties &
+               (DMTCP_ZERO_PAGE_PARENT_HEADER | DMTCP_ZERO_PAGE_CHILD_HEADER |
+                DMTCP_ZERO_PAGE)) == 0);
+
   /* CASE MAPPED AS ZERO PAGE: */
   if ((area.properties & DMTCP_ZERO_PAGE) != 0) {
-    DPRINTF("restoring zero-paged anonymous area, %p bytes at %p\n",
-            area.size, area.addr);
-    // No need to mmap since the region has already been mmapped by the parent
-    // header.
+    DPRINTF("restoring zero-paged anonymous area, %p bytes at %p\n", area.size,
+            area.addr);
+    // No need to mmap since the region has already been mmapped by the
+    // parent header.
     // Just restore write-protection if needed.
     if (!(area.prot & PROT_WRITE)) {
       if (mtcp_sys_mprotect(area.addr, area.size, area.prot) < 0) {
@@ -892,17 +977,16 @@ read_one_memory_area(int fd, VA endOfStack)
   }
 
 #ifdef FAST_RST_VIA_MMAP
-    /* CASE MAP_ANONYMOUS with FAST_RST enabled
-     * We only want to do this in the MAP_ANONYMOUS case, since we don't want
-     *   any writes to RAM to be reflected back into the underlying file.
-     * Note that in order to map from a file (ckpt image), we must turn off
-     *   anonymous (~MAP_ANONYMOUS).  It's okay, since the fd
-     *   should have been opened with read permission, only.
-     */
-    else if (area.flags & MAP_ANONYMOUS) {
-      mmapfile (fd, area.addr, area.size, area.prot,
-                area.flags & ~MAP_ANONYMOUS);
-    }
+  /* CASE MAP_ANONYMOUS with FAST_RST enabled
+   * We only want to do this in the MAP_ANONYMOUS case, since we don't want
+   *   any writes to RAM to be reflected back into the underlying file.
+   * Note that in order to map from a file (ckpt image), we must turn off
+   *   anonymous (~MAP_ANONYMOUS).  It's okay, since the fd
+   *   should have been opened with read permission, only.
+   */
+  else if (area.flags & MAP_ANONYMOUS) {
+    mmapfile(fd, area.addr, area.size, area.prot, area.flags & ~MAP_ANONYMOUS);
+  }
 #endif
 
   /* CASE MAP_ANONYMOUS (usually implies MAP_PRIVATE):
@@ -910,7 +994,7 @@ read_one_memory_area(int fd, VA endOfStack)
    * directly.  So mmap an anonymous area and read the file into it.
    * If file exists, turn off MAP_ANONYMOUS: standard private map
    */
-  else {
+  if (1) {
     /* If there is a filename there, though, pretend like we're mapping
      * to it so a new /proc/self/maps will show a filename there like with
      * original process.  We only need read-only access because we don't
